@@ -44,8 +44,10 @@ When you run the tool again for the same game, languages, window and model, it f
 ```
 Masz podsumowanie z 23.10 17:36 (gpt-6-luna).
 Od tego czasu: 142 nowe recenzje (odsetek pozytywnych w oknie 86,3% → 86,1%), 1 nowe ogłoszenie twórców: „Patch Notes 2.01.00”.
-[W]yświetl zapisane / [O]dśwież? [W/o]
+[W]yświetl zapisane / [O]dśwież (ostatnio ~$0,03, ok. 1 min 14 s)? [W/o]
 ```
+
+The cost and time come from the previous run of the same game and model. Enter shows the saved summary; any answer other than `w` or `o` asks again, so a reflexive "y" never triggers a paid run.
 
 "Show saved" prints the saved summary and rebuilds the report with current charts, so it is instant and costs nothing. The question is only asked in an interactive terminal; in scripts or with redirected output the tool generates a new summary as before. `--cached` and `--refresh` skip the question. A summary from a different model is never reused silently; the tool only mentions that it exists.
 

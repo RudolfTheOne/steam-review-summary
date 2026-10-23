@@ -147,6 +147,18 @@ def main(argv=None):
         webbrowser.open(html_path.resolve().as_uri())
 
 
+def _last_run_cost(run):
+    """'ostatnio ~$0,03, ok. 1 min 10 s' from the saved run, or '' if unknown."""
+    parts = []
+    if run.get("cost") is not None:
+        parts.append(f"ostatnio ~${run['cost']:.2f}".replace(".", ","))
+    secs = (run.get("usage") or {}).get("seconds")
+    if secs:
+        m, sec = divmod(round(secs), 60)
+        parts.append(f"ok. {m} min {sec} s" if m else f"ok. {sec} s")
+    return ", ".join(parts)
+
+
 def _offer_saved(a, profile, info, languages, ws, rows, announcements, snap, today):
     """If this game was already summarised with this model and window, say what changed since and
     offer the saved summary. Returns True when the saved one was shown (nothing else to do)."""
@@ -171,12 +183,18 @@ def _offer_saved(a, profile, info, languages, ws, rows, announcements, snap, tod
     if not a.cached:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             return False  # nobody to ask: behave as before and generate a new one
-        try:
-            answer = input("[W]yświetl zapisane / [O]dśwież? [W/o] ").strip().lower()
-        except EOFError:
-            answer = "o"
-        if answer not in ("", "w"):
-            return False
+        last = _last_run_cost(prev)
+        question = f"[W]yświetl zapisane / [O]dśwież{f' ({last})' if last else ''}? [W/o] "
+        while True:
+            try:
+                answer = input(question).strip().lower()
+            except EOFError:
+                return False
+            if answer in ("", "w"):
+                break
+            if answer == "o":
+                return False
+            _err("Wpisz w (wyświetl zapisane) albo o (odśwież); Enter = wyświetl.")
     print()
     md = term_md.Renderer()
     md.feed(prev["summary"])
