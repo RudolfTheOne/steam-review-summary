@@ -10,7 +10,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import chart_term, config, llm, progress, prompt, report, sample, steam, term_md, timeline
+from . import chart_term, config, history, llm, progress, prompt, report, sample, steam, term_md, timeline
 
 
 def _err(*a):
@@ -33,6 +33,9 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="pobierz dane, pokaż wykres, próbkę i koszt; nie wołaj modelu")
     ap.add_argument("--out", default=cfg["output_dir"], help="katalog na raporty")
     ap.add_argument("--no-open", action="store_true", help="nie otwieraj raportu w przeglądarce")
+    again = ap.add_mutually_exclusive_group()
+    again.add_argument("--refresh", action="store_true", help="zawsze generuj nowe podsumowanie, nawet jeśli jest zapisane")
+    again.add_argument("--cached", action="store_true", help="pokaż zapisane podsumowanie bez pytania (jeśli jest)")
     ap.add_argument("--set-default-model", metavar="MODEL",
                     help="zapisz model jako domyślny w config.toml (można podać bez gry)")
     a = ap.parse_args(argv)
@@ -77,6 +80,9 @@ def main(argv=None):
              "Rozważ więcej języków (--languages) albo dłuższe okno (--months).")
 
     profile = config.resolve_model(cfg, a.model)
+    snap = history.snapshot(rows, ws, announcements)
+    if _offer_saved(a, profile, info, languages, ws, rows, announcements, snap, today):
+        return
     prices = llm.openrouter_prices(profile["price_id"]) if profile.get("price_id") else None
     p_in = profile.get("price_in", prices["in"] if prices else None)
     p_out = profile.get("price_out", prices["out"] if prices else None)
@@ -99,7 +105,8 @@ def main(argv=None):
         sys.exit(f"Szacunek {est} tokenów przekracza limit {cfg['max_tokens']}; zmniejsz --budget.")
 
     slug = re.sub(r"[^\w]+", "-", info["name"].lower()).strip("-")[:40] or str(appid)
-    out_dir = Path(a.out).expanduser() / f"{today.isoformat()}-{slug}"
+    model_slug = re.sub(r"[^\w]+", "-", profile["name"].lower()).strip("-")[:30]
+    out_dir = Path(a.out).expanduser() / f"{today.isoformat()}-{slug}-{model_slug}"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "prompt.txt").write_text(system + "\n\n=====\n\n" + user, encoding="utf-8")
 
@@ -127,6 +134,8 @@ def main(argv=None):
         _err(f"Wejście {usage.get('input')} tok., wyjście {usage.get('output')} tok., {usage.get('seconds')} s"
              + (f", koszt ~${cost:.3f}" if cost is not None else ""))
         (out_dir / "summary.md").write_text(summary_md, encoding="utf-8")
+        history.save(out_dir, info=info, languages=languages, window_start=ws, profile=profile,
+                     summary_md=summary_md, ids=ids, usage=usage, cost=cost, snap=snap)
 
     page = report.build(info, rows, ws, announcements, summary_md, ids,
                         {"languages": languages, "today": today.isoformat(), "model": profile["model"],
@@ -136,6 +145,54 @@ def main(argv=None):
     _err(f"Raport: {html_path}")
     if not a.no_open:
         webbrowser.open(html_path.resolve().as_uri())
+
+
+def _offer_saved(a, profile, info, languages, ws, rows, announcements, snap, today):
+    """If this game was already summarised with this model and window, say what changed since and
+    offer the saved summary. Returns True when the saved one was shown (nothing else to do)."""
+    runs = history.find(a.out, info["appid"], languages, ws)
+    same = [r for r in runs if r["model"] == profile["model"]]
+    if not same:
+        if a.cached:
+            sys.exit("Nie ma zapisanego podsumowania dla tej gry, modelu, języków i okna."
+                     + (f" Jest z modelu {runs[0]['model']} (--model {runs[0]['profile']} --cached)." if runs else ""))
+        if runs:
+            _err(f"Jest zapisane podsumowanie z innego modelu: {runs[0]['model']} "
+                 f"({runs[0]['created'][:16].replace('T', ' ')}); pokażesz je przez --model {runs[0]['profile']} --cached")
+        return False
+    if a.refresh:
+        return False
+    prev = same[0]
+    note = history.describe(prev, history.changes(prev["snapshot"], snap))
+    for line in note:
+        _err(line)
+    if a.dry_run:
+        return False
+    if not a.cached:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return False  # nobody to ask: behave as before and generate a new one
+        try:
+            answer = input("[W]yświetl zapisane / [O]dśwież? [W/o] ").strip().lower()
+        except EOFError:
+            answer = "o"
+        if answer not in ("", "w"):
+            return False
+    print()
+    md = term_md.Renderer()
+    md.feed(prev["summary"])
+    md.close()
+    print()
+    out_dir = Path(prev["dir"])
+    page = report.build(info, rows, ws, announcements, prev["summary"], history.citations(prev),
+                        {"languages": languages, "today": today.isoformat(), "model": prev["model"],
+                         "usage": prev.get("usage") or {}, "cost": prev.get("cost"),
+                         "min_chars": sample.MIN_REVIEW_CHARS, "summary_note": " ".join(note)})
+    html_path = out_dir / "report.html"
+    html_path.write_text(page, encoding="utf-8")
+    _err(f"Raport (wykresy aktualne, streszczenie zapisane): {html_path}")
+    if not a.no_open:
+        webbrowser.open(html_path.resolve().as_uri())
+    return True
 
 
 if __name__ == "__main__":

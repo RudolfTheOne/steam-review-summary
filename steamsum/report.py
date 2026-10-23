@@ -431,6 +431,7 @@ recenzje w językach: {esc(', '.join(meta['languages']))} · stan na {esc(meta['
 {hist}
 
 <h2>Streszczenie opinii</h2>
+{('<p class="caption">' + esc(meta['summary_note']) + ' Wykresy i tabela są aktualne, streszczenie pochodzi z zapisanego uruchomienia.</p>') if meta.get('summary_note') else ''}
 <div class="summary">{summary_html}</div>
 
 <h2>Liczby z okna analizy</h2>

@@ -130,7 +130,7 @@ def _review_params(languages, start, end, **extra):
 def summary(appid, languages, start, end, purchase_type="all", closed=True):
     """Positive/negative review counts in [start, end). Closed windows are cached forever."""
     key = f"sum/{appid}/{','.join(languages)}/{purchase_type}/{start}/{end}"
-    hit = cache.get(key, max_age=None if closed else 6 * 3600)
+    hit = cache.get(key, max_age=None if closed else 3600)  # fresh counts tell what changed since a saved run
     if hit:
         return hit
     p = _review_params(languages, start, end, num_per_page=0, cursor="*", filter="all", purchase_type=purchase_type)
@@ -191,7 +191,7 @@ def _slim(r):
 def news(appid, since):
     """Official developer announcements (patch notes) since `since`."""
     key = f"news/{appid}/{since}"
-    hit = cache.get(key, max_age=6 * 3600)
+    hit = cache.get(key, max_age=3600)
     if hit:
         return hit
     url = ("https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?" + urllib.parse.urlencode(

@@ -6,6 +6,8 @@ python3 steamsum.py 1465360 --model gemini
 python3 steamsum.py 10 --model openrouter:openai/gpt-6-luna --months 12
 python3 steamsum.py 1203190 --dry-run      # no model: chart, sample and estimated cost only
 python3 steamsum.py --set-default-model luna   # save the default model to config.toml
+python3 steamsum.py 3321460 --cached       # show the saved summary without asking
+python3 steamsum.py 3321460 --refresh      # always generate a new one
 ```
 
 Requires Python 3.11+ and nothing else. Works on macOS, Linux and Windows.
@@ -32,6 +34,20 @@ The terminal messages and the report are in Polish; the summary language is set 
    - method notes.
 
    `summary.md` and `prompt.txt` are saved next to it; the prompt can be pasted into any chat by hand.
+
+## Saved summaries
+
+Each summary is saved next to its report (`~/steamsum/<date>-<game>-<model>/`): `run.json` with the summary, the model, the window, the languages and a snapshot of the review counts and developer announcements at the time, and `citations.json` mapping the `[#n]` numbers to reviews.
+
+When you run the tool again for the same game, languages, window and model, it fetches the current counts (a few requests) and tells you what changed since, e.g.:
+
+```
+Masz podsumowanie z 23.10 17:36 (gpt-6-luna).
+Od tego czasu: 142 nowe recenzje (odsetek pozytywnych w oknie 86,3% → 86,1%), 1 nowe ogłoszenie twórców: „Patch Notes 2.01.00”.
+[W]yświetl zapisane / [O]dśwież? [W/o]
+```
+
+"Show saved" prints the saved summary and rebuilds the report with current charts, so it is instant and costs nothing. The question is only asked in an interactive terminal; in scripts or with redirected output the tool generates a new summary as before. `--cached` and `--refresh` skip the question. A summary from a different model is never reused silently; the tool only mentions that it exists.
 
 ## Models
 
@@ -112,6 +128,7 @@ Prices for the cost estimate come from OpenRouter's public catalogue or from `pr
 | `steamsum/report.py` | HTML report (SVG drawn in Python, a small Markdown renderer) |
 | `steamsum/term_md.py` | streaming Markdown → coloured terminal output |
 | `steamsum/progress.py` | the self-updating status line |
+| `steamsum/history.py` | saved summaries and what changed since |
 
 ## License
 
