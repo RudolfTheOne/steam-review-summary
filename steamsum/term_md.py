@@ -1,6 +1,6 @@
-"""Streaming Markdown → ANSI for the terminal, styled after glow's "dracula" theme: 2-space margin,
-word wrapping, magenta headings, red bold, yellow italics, green code, "•" bullets; citations [#12] dimmed.
-Works chunk by chunk, so the model's answer still appears as it is generated."""
+"""Streaming Markdown → ANSI for the terminal, styled after glow's "dracula" theme (glamour's palette):
+2-space margin, word wrapping, a blank line between blocks, purple headings, orange bold, yellow italics,
+green code, "•" bullets; citations [#12] dimmed. Works chunk by chunk, so the answer appears as it is generated."""
 
 import os
 import shutil
@@ -8,11 +8,32 @@ import sys
 
 MARGIN = "  "
 MAX_WIDTH = 160
-STYLES = {"heading": "95;1", "bold": "91;1", "italic": "93;3", "code": "92", "cite": "2"}
+DRACULA = {"heading": ("#bd93f9", "1"), "bold": ("#ffb86c", "1"), "italic": ("#f1fa8c", "3"),
+           "code": ("#50fa7b", ""), "number": ("#8be9fd", ""), "cite": (None, "2")}
 
 
 def enabled():
     return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+
+def _truecolor():
+    return os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit")
+
+
+def _sgr(hex_color, attrs):
+    """SGR parameters for a hex colour: 24-bit if the terminal says so, else the nearest xterm-256 colour."""
+    parts = [attrs] if attrs else []
+    if hex_color:
+        r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+        if _truecolor():
+            parts.append(f"38;2;{r};{g};{b}")
+        else:
+            q = lambda v: 0 if v < 48 else 1 if v < 115 else (v - 35) // 40
+            parts.append(f"38;5;{16 + 36 * q(r) + 6 * q(g) + q(b)}")
+    return ";".join(parts)
+
+
+STYLES = {k: _sgr(*v) for k, v in DRACULA.items()}
 
 
 class Renderer:
@@ -21,6 +42,7 @@ class Renderer:
         self.color = enabled() if color is None else color
         self.width = width or min(shutil.get_terminal_size((100, 24)).columns, MAX_WIDTH)
         self.emitted = ""  # ANSI style currently active on the output
+        self.prev_block = None  # kind of the previous block, for spacing like glow
         self._reset_line()
 
     # --- state ---------------------------------------------------------------------------
@@ -52,9 +74,17 @@ class Renderer:
             self.emitted = style
         self.out.write(text)
 
-    def _start_line(self, lead=""):
-        self._emit(MARGIN + lead, "")
+    def _start_line(self, lead="", lead_style=""):
+        self._emit(MARGIN, "")
+        self._emit(lead, lead_style)
         self.col = len(MARGIN) + len(lead)
+
+    def _block(self, kind):
+        """One blank line between blocks, except between items of the same list (glow's spacing)."""
+        same_list = kind == self.prev_block and kind in ("item", "number", "quote")
+        if self.prev_block is not None and not same_list:
+            self._emit("\n", "")
+        self.prev_block = kind
 
     def _flush_word(self):
         if not self.word:
@@ -91,17 +121,26 @@ class Renderer:
         self.prefix, self.line_start = "", False
         if p.startswith("#") and p.lstrip("#").startswith(" "):
             hashes = p.split(" ", 1)[0]
+            self._block("heading")
             self.heading = True
             self._start_line()
             self._text(hashes + " " + p[len(hashes):].lstrip())
         elif p[:2] in ("- ", "* "):
+            self._block("item")
             self._start_line(indent + "• ")
             self._text(p[2:])
         elif p.startswith("> "):
+            self._block("quote")
             self.italic = True
             self._start_line(indent + "  ")
             self._text(p[2:])
+        elif p[0].isdigit() and (". " in p or ") " in p):
+            num, rest = p.split(" ", 1)
+            self._block("number")
+            self._start_line(indent + num + " ", STYLES["number"])
+            self._text(rest)
         else:
+            self._block("para")
             self._start_line(indent)
             self._text(p)
 
@@ -154,6 +193,8 @@ class Renderer:
 
     def feed(self, text):
         for ch in text:
+            if ch == "\n" and self.line_start and not self.prefix:
+                continue  # the model's own blank lines: spacing is decided by _block
             if ch == "\n":
                 self._newline()
             elif self.line_start:
