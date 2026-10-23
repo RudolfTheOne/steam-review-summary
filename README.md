@@ -5,6 +5,7 @@ python3 steamsum.py https://store.steampowered.com/app/3321460/Crimson_Desert_En
 python3 steamsum.py 1465360 --model gemini
 python3 steamsum.py 10 --model openrouter:openai/gpt-6-luna --months 12
 python3 steamsum.py 1203190 --dry-run      # no model: chart, sample and estimated cost only
+python3 steamsum.py --set-default-model luna   # save the default model to config.toml
 ```
 
 Requires Python 3.11+ and nothing else. Works on macOS, Linux and Windows.
@@ -23,7 +24,8 @@ The terminal messages and the report are in Polish; the summary language is set 
    - Earlier history: the most helpful reviews of each year, or of each month if the history is shorter than a year. This also shows how opinions evolved.
    - Cleaning: BBCode tags, unchecked lines of "☐ Bad ☑ Good" templates, repeated characters, duplicate texts. Reviews under 30 characters are skipped, those over 3000 are shortened.
 5. Builds the prompt: the score table, developer announcements from the window (patch notes) and reviews grouped by period. The model must cite reviews as `[#12]` and must not state its own numbers.
-6. Writes a single-file HTML report:
+6. Streams the model's answer to the terminal, formatted in the style of glow's "dracula" theme: wrapped text, coloured headings and bold, dimmed citations.
+7. Writes a single-file HTML report:
    - % positive over time with an uncertainty band, review counts and announcement markers;
    - the summary, where every citation links to the review on Steam and shows its beginning on hover;
    - a table of window months split into Steam purchases and key activations;
@@ -59,6 +61,8 @@ Keys never go into the repository or into `config.toml`; a profile only says *wh
 
 Good practice: a separate key just for this tool, with a spending limit set on the provider's site.
 
+To change the default model without editing files: `python3 steamsum.py --set-default-model <profile or provider:model>`. It only rewrites the top-level `model = ...` line and keeps the rest of the file.
+
 Your own profiles and settings go in `~/.config/steamsum/config.toml` (Windows: `%APPDATA%\steamsum\config.toml`):
 
 ```toml
@@ -85,7 +89,8 @@ Prices for the cost estimate come from OpenRouter's public catalogue or from `pr
 
 ## Steam: what we learned
 
-- `appreviews` accepts several comma-separated languages, a date window (`start_date`, `end_date`, `date_range_type=include`), `review_type=positive|negative` and `purchase_type=steam|non_steam_purchase`. No key needed.
+- **Endpoint change (2026-10-23):** `store.steampowered.com/appreviews/<id>` now redirects to the store front page. `ajaxappreviews/<id>` takes the same parameters and returns the same JSON; the tool tries both and uses whichever answers.
+- The review endpoint accepts several comma-separated languages, a date window (`start_date`, `end_date`, `date_range_type=include`), `review_type=positive|negative` and `purchase_type=steam|non_steam_purchase`. No key needed.
 - **"Most helpful" has limits.** With a date window the list stops at 100 reviews, because page 2 repeats page 1. Without a window it only covers the last year (`day_range` max 365). There is no "most helpful of all time", which is why earlier history is sampled year by year.
 - **Rate limit:** about 250 requests within a few minutes trigger HTTP 429 for 1–2 minutes. The tool waits 0.6 s between requests and 30–120 s after a 429, so the first run for a big game takes 3–5 minutes. Everything is cached (macOS: `~/Library/Caches/steamsum`): closed months forever, the current month for 6 hours, so later runs take seconds.
 - "Key activations" are not proof of astroturfing on their own. For Counter-Strike they were 75% of reviews in 2011 (retail boxes, bundles) and about 20% today. The report compares each month with the game's own average and hides the percentage for groups under 30 reviews.
@@ -105,6 +110,8 @@ Prices for the cost estimate come from OpenRouter's public catalogue or from `pr
 | `steamsum/llm.py` | OpenAI-compatible and Anthropic protocols, key lookup, token calibration, prices |
 | `steamsum/chart_term.py` | terminal chart |
 | `steamsum/report.py` | HTML report (SVG drawn in Python, a small Markdown renderer) |
+| `steamsum/term_md.py` | streaming Markdown → coloured terminal output |
+| `steamsum/progress.py` | the self-updating status line |
 
 ## License
 

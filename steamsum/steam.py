@@ -11,7 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import cache
+from . import cache, progress
 
 STORE = "https://store.steampowered.com"
 UA = "Mozilla/5.0 (steamsum; +local script)"
@@ -20,6 +20,14 @@ RATE_WAITS = (30, 45, 60, 90, 120)  # seconds to wait after consecutive 429 resp
 
 _last_request = 0.0
 requests_made = 0  # for stats
+
+# On 2026-10-23 Steam started redirecting /appreviews/ to the store front page; /ajaxappreviews/ takes the
+# same parameters and returns the same JSON. Try both and stick with whichever works.
+_REVIEW_PATHS = ["appreviews", "ajaxappreviews"]
+
+
+class NotJSON(Exception):
+    """Steam answered with a redirect or an HTML page instead of JSON."""
 
 
 def parse_appid(text):
@@ -41,18 +49,25 @@ def _get_json(url, tries=6):
             time.sleep(wait)
         _last_request = time.monotonic()
         requests_made += 1
+        progress.suffix(f"zapytań do Steama: {requests_made}")
         req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Encoding": "gzip"})
         try:
             with urllib.request.urlopen(req, timeout=40) as r:
                 body = r.read()
                 if r.headers.get("Content-Encoding") == "gzip":
                     body = gzip.decompress(body)
+                redirected = r.geturl().split("?")[0] != url.split("?")[0]
+                if redirected or "html" in (r.headers.get("Content-Type") or ""):
+                    raise NotJSON(r.geturl())
                 return json.loads(body)
         except urllib.error.HTTPError as e:
             if e.code == 429 and attempt < tries - 1:
                 w = RATE_WAITS[min(attempt, len(RATE_WAITS) - 1)]
-                print(f"  Steam ogranicza tempo (429), czekam {w} s…", file=sys.stderr, flush=True)
-                time.sleep(w)
+                saved = progress._current
+                for left in range(w, 0, -1):
+                    progress.status(f"Steam ogranicza tempo zapytań (429), czekam {left} s…")
+                    time.sleep(1)
+                progress.status(saved)
                 continue
             if e.code in (500, 502, 503, 504) and attempt < tries - 1:
                 time.sleep(5 * (attempt + 1))
@@ -92,6 +107,18 @@ def app_info(appid):
     return info
 
 
+def _reviews_json(appid, params):
+    """GET Steam's review endpoint, switching to the alternative path if the current one redirects."""
+    query = urllib.parse.urlencode(params)
+    for _ in range(len(_REVIEW_PATHS)):
+        try:
+            return _get_json(f"{STORE}/{_REVIEW_PATHS[0]}/{appid}?{query}")
+        except NotJSON:
+            _REVIEW_PATHS.append(_REVIEW_PATHS.pop(0))
+    raise RuntimeError("Steam nie zwraca recenzji w formacie JSON pod żadnym ze znanych adresów "
+                       f"({', '.join(_REVIEW_PATHS)}). Możliwe, że znowu zmienił API.")
+
+
 def _review_params(languages, start, end, **extra):
     p = {"json": 1, "language": ",".join(languages), "purchase_type": "all", "filter_offtopic_activity": 0}
     if start or end:
@@ -107,7 +134,7 @@ def summary(appid, languages, start, end, purchase_type="all", closed=True):
     if hit:
         return hit
     p = _review_params(languages, start, end, num_per_page=0, cursor="*", filter="all", purchase_type=purchase_type)
-    q = _get_json(f"{STORE}/appreviews/{appid}?" + urllib.parse.urlencode(p))["query_summary"]
+    q = _reviews_json(appid, p)["query_summary"]
     out = {"positive": q.get("total_positive", 0), "negative": q.get("total_negative", 0)}
     cache.put(key, out)
     return out
@@ -126,7 +153,7 @@ def reviews(appid, languages, start, end, order, limit, review_type="all", close
     while len(st["items"]) < limit:
         p = _review_params(languages, start, end, num_per_page=100, cursor=st["cursor"],
                            filter="all" if order == "helpful" else "recent", review_type=review_type)
-        d = _get_json(f"{STORE}/appreviews/{appid}?" + urllib.parse.urlencode(p))
+        d = _reviews_json(appid, p)
         new = [r for r in d.get("reviews") or [] if r["recommendationid"] not in seen]
         for r in new:
             seen.add(r["recommendationid"])

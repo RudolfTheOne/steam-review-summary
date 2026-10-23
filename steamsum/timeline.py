@@ -3,7 +3,7 @@ Request count stays bounded however old the game is (at most ~25 years + 24 mont
 
 import datetime as dt
 
-from . import steam
+from . import progress, steam
 
 MONTHLY = 24  # number of recent months shown individually
 
@@ -40,7 +40,9 @@ def periods(first_review, today):
 
 def build(appid, languages, first_review, today, split_purchase=True):
     rows = []
-    for s, e, label, closed in periods(first_review, today):
+    ps = periods(first_review, today)
+    for i, (s, e, label, closed) in enumerate(ps, 1):
+        progress.status(f"Liczby recenzji w czasie: {label} ({i}/{len(ps)})")
         a = steam.summary(appid, languages, s, e, "all", closed)
         row = {"start": s.isoformat(), "end": e.isoformat(), "label": label,
                "yearly": len(label) <= 4 or "(" in label, **a}
@@ -48,4 +50,5 @@ def build(appid, languages, first_review, today, split_purchase=True):
             st = steam.summary(appid, languages, s, e, "steam", closed)
             row["steam_positive"], row["steam_negative"] = st["positive"], st["negative"]
         rows.append(row)
+    progress.clear()
     return rows

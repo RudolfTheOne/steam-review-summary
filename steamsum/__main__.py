@@ -10,11 +10,11 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import chart_term, config, llm, prompt, report, sample, steam, timeline
+from . import chart_term, config, llm, progress, prompt, report, sample, steam, term_md, timeline
 
 
 def _err(*a):
-    print(*a, file=sys.stderr, flush=True)
+    progress.note(" ".join(str(x) for x in a))
 
 
 def main(argv=None):
@@ -23,7 +23,7 @@ def main(argv=None):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     cfg = config.load()
     ap = argparse.ArgumentParser(prog="steamsum", description="Streszczenie recenzji gry ze Steama.")
-    ap.add_argument("game", help="link do sklepu Steam, link do Steam Review Explorer albo numer gry")
+    ap.add_argument("game", nargs="?", help="link do sklepu Steam, link do Steam Review Explorer albo numer gry")
     ap.add_argument("-m", "--model", default=cfg["model"],
                     help=f"profil ({', '.join(cfg['models'])}) albo dostawca:model, np. openrouter:google/gemini-3.8-flash")
     ap.add_argument("--months", type=int, default=cfg["window_months"], help="okno analizy: ostatnie N miesięcy")
@@ -33,7 +33,21 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="pobierz dane, pokaż wykres, próbkę i koszt; nie wołaj modelu")
     ap.add_argument("--out", default=cfg["output_dir"], help="katalog na raporty")
     ap.add_argument("--no-open", action="store_true", help="nie otwieraj raportu w przeglądarce")
+    ap.add_argument("--set-default-model", metavar="MODEL",
+                    help="zapisz model jako domyślny w config.toml (można podać bez gry)")
     a = ap.parse_args(argv)
+
+    if a.set_default_model:
+        config.resolve_model(cfg, a.set_default_model)  # fails loudly on an unknown name
+        path = config.save_default_model(a.set_default_model)
+        print(f"Domyślny model: {a.set_default_model} (zapisano w {path})")
+        if not a.game:
+            return
+        args = argv if argv is not None else sys.argv[1:]
+        if not any(x in ("-m", "--model") or x.startswith("--model=") for x in args):
+            a.model = a.set_default_model  # no explicit --model: use the one just saved
+    if not a.game:
+        ap.error("podaj link do gry albo jej numer")
 
     today = dt.date.today()
     languages = [x.strip() for x in a.languages.split(",") if x.strip()]
@@ -44,15 +58,17 @@ def main(argv=None):
     ws = window_start.isoformat()
 
     appid = steam.parse_appid(a.game)
+    progress.status("Pobieram informacje o grze…")
     info = steam.app_info(appid)
     first = dt.date.fromisoformat(info["reviews_start"]) if info["reviews_start"] else today - dt.timedelta(days=365)
     _err(f"{info['name']} (app {appid}), premiera: {info['release']}, recenzje od {first}")
-    _err("Pobieram liczby recenzji w czasie…")
     rows = timeline.build(appid, languages, first, today)
     total = sum(r["positive"] + r["negative"] for r in rows)
     if not total:
         sys.exit("Brak recenzji w wybranych językach.")
+    progress.status("Pobieram ogłoszenia twórców…")
     announcements = steam.news(appid, max(first, timeline.add_months(timeline.month_start(today), -(timeline.MONTHLY - 1))))
+    progress.clear()
     print("\n" + chart_term.render(rows, ws, announcements) + "\n", flush=True)
     in_window = sum(r["positive"] + r["negative"] for r in rows if r["end"] > ws)
     _err(f"Recenzji w wybranych językach: {total}, w oknie od {ws}: {in_window}")
@@ -89,12 +105,22 @@ def main(argv=None):
 
     summary_md, usage, cost = "", {}, None
     if not a.dry_run:
-        _err(f"Pytam model {profile['model']}…\n")
+        _err(f"Pytam model {profile['model']}…")
+        progress.suffix("")
+        ticker = progress.Ticker("Model czyta recenzje i myśli…")
+        md = term_md.Renderer()
+
+        def on_text(s):
+            ticker.stop()  # the first token ends the wait
+            md.feed(s)
+
         try:
-            summary_md, usage = llm.complete(profile, system, user, on_text=lambda s: print(s, end="", flush=True))
+            with ticker:
+                summary_md, usage = llm.complete(profile, system, user, on_text=on_text)
         except llm.LLMError as e:
             sys.exit(f"\nBłąd modelu: {e}\nDane i prompt są w {out_dir}")
-        print("\n")
+        md.close()
+        print()
         cost = usage.get("cost")
         if cost is None and p_in is not None and usage.get("input"):
             cost = (usage["input"] * p_in + (usage.get("output") or 0) * p_out) / 1e6

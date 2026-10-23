@@ -14,7 +14,7 @@ import hashlib
 import math
 import re
 
-from . import steam
+from . import progress, steam
 
 MIN_SIDE = 0.25
 MAX_REVIEW_CHARS = 3000
@@ -223,7 +223,9 @@ def sample(appid, languages, timeline, window_start, budget_tokens, chars_per_to
     rows, before_budget = plan(timeline, window_start, budget_tokens)
     sm = Sampler(appid, languages, Budget(chars_per_token), today)
     window = []
-    for r in (r for r in rows if r["in_window"]):
+    win_rows = [r for r in rows if r["in_window"]]
+    for i, r in enumerate(win_rows, 1):
+        progress.status(f"Dobieram recenzje: {r['label']} ({i}/{len(win_rows)} w oknie)")
         s = max(dt.date.fromisoformat(r["start"]), dt.date.fromisoformat(window_start))
         e = dt.date.fromisoformat(r["end"])
         window += sm.period(s, e, r["label"], r["positive"], r["negative"], r["budget"], e <= today)
@@ -234,7 +236,9 @@ def sample(appid, languages, timeline, window_start, budget_tokens, chars_per_to
         # 'helpful' with a date range yields at most ~100 reviews per type, so cap each period at ~200.
         caps = [min((p + n) * EST_TOKENS_PER_REVIEW, 200 * EST_TOKENS_PER_REVIEW) for *_, p, n in years]
         alloc = _sqrt_alloc(before_budget, [math.sqrt(p + n) for *_, p, n in years], caps)
-        for (s, e, y, p, n), a in zip(years, alloc):
+        for i, ((s, e, y, p, n), a) in enumerate(zip(years, alloc), 1):
             if a >= 1:
+                progress.status(f"Dobieram recenzje sprzed okna: {y} ({i}/{len(years)})")
                 before += sm.period(s, e, f"przed oknem: {y}", p, n, a, True, orders=("helpful",))
+    progress.clear()
     return rows, before + window

@@ -1,7 +1,9 @@
 """Settings: built-in defaults merged with the user's config.toml (overrides fields, adds profiles)."""
 
 import copy
+import json
 import os
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -66,6 +68,23 @@ def load():
         with p.open("rb") as f:
             _merge(cfg, tomllib.load(f))
     return cfg
+
+
+def save_default_model(name):
+    """Set the top-level `model = "..."` in config.toml, keeping the rest of the file (comments included)."""
+    p = config_path()
+    text = p.read_text(encoding="utf-8") if p.exists() else ""
+    m = re.search(r"^\[", text, re.M)  # top-level keys end where the first [section] starts
+    head, tail = (text[:m.start()], text[m.start():]) if m else (text, "")
+    line = f"model = {json.dumps(name)}"
+    pat = re.compile(r"^model\s*=\s*(\"[^\"]*\"|'[^']*')([ \t]*#.*)?$", re.M)
+    if pat.search(head):
+        head = pat.sub(lambda mm: line + (mm.group(2) or ""), head, count=1)
+    else:
+        head = (head.rstrip("\n") + "\n" if head.strip() else "") + line + "\n" + ("\n" if tail else "")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(head + tail, encoding="utf-8")
+    return p
 
 
 def resolve_model(cfg, name):
