@@ -1,61 +1,71 @@
-# steamsum: streszczenie recenzji gry ze Steama
+# steamsum: summarise a game's Steam reviews with any LLM
 
 ```
 python3 steamsum.py https://store.steampowered.com/app/3321460/Crimson_Desert_Enhanced/
 python3 steamsum.py 1465360 --model gemini
 python3 steamsum.py 10 --model openrouter:openai/gpt-6-luna --months 12
-python3 steamsum.py 1203190 --dry-run      # bez modelu: wykres, próbka, szacowany koszt
+python3 steamsum.py 1203190 --dry-run      # no model: chart, sample and estimated cost only
 ```
 
-Wymaga Pythona 3.11+ i niczego więcej: działa na macOS, Linuksie i Windowsie.
+Requires Python 3.11+ and nothing else. Works on macOS, Linux and Windows.
 
-## Co robi
+The terminal messages and the report are in Polish; the summary language is set by `answer_language` in the config.
 
-1. Z linku wyciąga numer gry. Pobiera nazwę, datę premiery i datę pierwszej recenzji.
-2. **Oś czasu:** liczba recenzji pozytywnych i negatywnych w wybranych językach. Ostatnie 24 miesiące liczy miesiąc po miesiącu, wcześniejsze lata rok po roku. Osobno liczy zakupy na Steamie, a różnica to aktywacje kluczy. Liczy to kod ze wszystkich recenzji, nie model.
-3. Rysuje wykres w terminalu, kolorowany progami Steama (80/70/40%).
-4. **Dobór recenzji** w budżecie tokenów (domyślnie 350 tys., twardy limit 600 tys.):
-   - 75% na okno analizy (domyślnie od 1. dnia miesiąca sprzed 9 miesięcy), 25% na tło sprzed okna (najbardziej pomocne recenzje z całej wcześniejszej historii);
-   - w oknie każdy miesiąc dostaje część proporcjonalną do pierwiastka z liczby recenzji;
-   - w miesiącu połowa najbardziej pomocnych, połowa najnowszych; strona mniejszościowa (pozytywne albo negatywne) dostaje co najmniej 25% miejsca;
-   - czyszczenie: znaczniki BBCode, niezaznaczone pola szablonów „☐ Bad ☑ Good”, powtórzenia znaków, kopie tych samych tekstów; recenzje krótsze niż 30 znaków pomijane, dłuższe niż 3000 skracane.
-5. Prompt: tabela liczb, ogłoszenia twórców z okna (patch notes) i recenzje pogrupowane po okresach. Model ma cytować recenzje `[#12]` i nie podawać własnych liczb.
-6. Raport HTML w jednym pliku: wykres % pozytywnych z pasmem niepewności, liczba recenzji, znaczniki ogłoszeń, streszczenie z odnośnikami do recenzji na Steamie, tabela okna, opis metody. Obok zapisuje `summary.md` i `prompt.txt`. Prompt można wkleić ręcznie do dowolnego czatu.
+## What it does
 
-## Modele
+1. Reads the app id from the link and fetches the game name, release date and the date of the first review.
+2. **Timeline:** positive and negative review counts in the chosen languages, month by month for the last 24 months and year by year before that. Steam purchases are counted separately, so the rest are key activations. Code computes these numbers from all reviews; the model never does.
+3. Prints a btop-style chart in the terminal, coloured by Steam's thresholds (80/70/40%).
+4. **Picks reviews** within a token budget (350k by default, hard limit 600k):
+   - 75% goes to the analysis window (by default from the first day of the month 9 months ago), 25% to earlier history. Whatever the window cannot use, for example because most of its reviews are one-liners, goes to the history.
+   - In the window, each month gets a share proportional to the square root of its review count, so a launch month does not eat everything and quiet months stay visible.
+   - Within a month: half most helpful, half newest. The minority side (positive or negative) gets at least 25% of the space; the model is given the real proportions separately.
+   - Earlier history: the most helpful reviews of each year, or of each month if the history is shorter than a year. This also shows how opinions evolved.
+   - Cleaning: BBCode tags, unchecked lines of "☐ Bad ☑ Good" templates, repeated characters, duplicate texts. Reviews under 30 characters are skipped, those over 3000 are shortened.
+5. Builds the prompt: the score table, developer announcements from the window (patch notes) and reviews grouped by period. The model must cite reviews as `[#12]` and must not state its own numbers.
+6. Writes a single-file HTML report:
+   - % positive over time with an uncertainty band, review counts and announcement markers;
+   - the summary, where every citation links to the review on Steam and shows its beginning on hover;
+   - a table of window months split into Steam purchases and key activations;
+   - method notes.
 
-Profile wbudowane (`--model`):
+   `summary.md` and `prompt.txt` are saved next to it; the prompt can be pasted into any chat by hand.
 
-| Profil | Dostawca | Model | Klucz |
+## Models
+
+Built-in profiles (`--model`):
+
+| Profile | Provider | Model | Key |
 |---|---|---|---|
-| `deepseek` (domyślny) | OpenRouter | deepseek/deepseek-v4.1-flash | `OPENROUTER_API_KEY` |
+| `deepseek` (default) | OpenRouter | deepseek/deepseek-v4.1-flash | `OPENROUTER_API_KEY` |
 | `gemini` | OpenRouter | google/gemini-3.8-flash | `OPENROUTER_API_KEY` |
 | `luna` | OpenAI | gpt-6-luna, `reasoning_effort: low` | `OPENAI_API_KEY` |
 | `claude` | Anthropic | claude-opus-5-5, `effort: medium` | `ANTHROPIC_API_KEY` |
 
-Dowolny model „w locie”: `dostawca:model`, gdzie dostawca to `openrouter`, `openai`, `anthropic`, `deepseek` (API DeepSeek) albo `ollama` (lokalnie).
+Any other model ad hoc: `provider:model`, where the provider is `openrouter`, `openai`, `anthropic`, `deepseek` (DeepSeek's own API) or `ollama` (local).
 
-### Klucze API
+### API keys
 
-Klucze nigdy nie trafiają do repozytorium ani do `config.toml`. Profil wskazuje tylko, *gdzie* szukać klucza. Kolejność:
+Keys never go into the repository or into `config.toml`; a profile only says *where* to look for the key. Lookup order:
 
-1. **Zmienna środowiskowa** z `key_env` (np. `OPENROUTER_API_KEY`). Działa wszędzie, na Windowsie najprostsza.
-2. **`key_cmd`**: dowolne polecenie, które wypisuje klucz, np. 1Password `op read "op://Private/OpenRouter/credential"`, `pass show openrouter`, na Linuksie `secret-tool lookup service steamsum account openrouter`.
-3. **Pęk kluczy macOS** (zalecane na Macu): usługa `steamsum`, konto = `key_name` profilu. Jednorazowo:
+1. **Environment variable** named in `key_env` (e.g. `OPENROUTER_API_KEY`). Works everywhere; simplest on Windows.
+2. **`key_cmd`**: any command that prints the key, e.g. 1Password `op read "op://Private/OpenRouter/credential"`, `pass show openrouter`, or `secret-tool lookup service steamsum account openrouter` on Linux.
+3. **macOS Keychain** (recommended on a Mac): service `steamsum`, account = the profile's `key_name`. Once:
    ```
    security add-generic-password -s steamsum -a openrouter -w
    ```
-   Polecenie zapyta o klucz, więc nie zostaje on w historii powłoki.
-4. **Magazyn kluczy narzędzia `llm`**, jeśli jest zainstalowane (`llm keys get openrouter`). Uwaga: to zwykły plik JSON.
+   It prompts for the key, so the key does not end up in your shell history.
+4. **The key store of the `llm` tool**, if installed (`llm keys get openrouter`). Note that it is a plain JSON file.
 
-Dobra praktyka: osobny klucz OpenRouter tylko do tego narzędzia, z limitem wydatków ustawionym na stronie OpenRouter.
+Good practice: a separate key just for this tool, with a spending limit set on the provider's site.
 
-Własne profile i ustawienia: `~/.config/steamsum/config.toml` (Windows: `%APPDATA%\steamsum\config.toml`):
+Your own profiles and settings go in `~/.config/steamsum/config.toml` (Windows: `%APPDATA%\steamsum\config.toml`):
 
 ```toml
 model = "gemini"
 budget_tokens = 400000
 languages = ["english", "polish", "german"]
+answer_language = "English"
 
 [models.sonnet]
 api = "anthropic"
@@ -66,31 +76,36 @@ price_in = 2.0
 price_out = 10.0
 
 [models.deepseek]
-key_cmd = "op read op://Private/OpenRouter/credential"   # nadpisuje sposób pobrania klucza
+key_cmd = "op read op://Private/OpenRouter/credential"   # overrides how the key is obtained
 ```
 
-Ceny do szacunku kosztu: z publicznego katalogu OpenRouter albo z `price_in`/`price_out` w profilu ($ za 1 mln tokenów).
+Prices for the cost estimate come from OpenRouter's public catalogue or from `price_in`/`price_out` in the profile ($ per 1M tokens).
 
-**Tokeny:** każdy model liczy je inaczej. Pomiar: prompt Crimson Desert (1226 recenzji, 763 tys. znaków) to 203 tys. tokenów według tokenizatora Gemini 3.8 Flash, czyli 3,76 znaku na token. Ręczny eksport CSV dawał ok. 2,2 znaku na token (1796 recenzji = 380 tys.), bo długie ID, znaczniki czasu, BBCode i szablony ASCII zjadają tokeny. Narzędzie zaczyna od 3,5. Po każdym wywołaniu zapisuje faktyczny przelicznik danego modelu i używa go przy następnym doborze próbki.
+**Tokens:** every model counts them differently. Measured: the Crimson Desert prompt (1226 reviews, 763k characters) is 203k tokens for the Gemini 3.8 Flash tokenizer, i.e. 3.76 characters per token. A hand-made CSV export of the same kind of data came to about 2.2 characters per token (1796 reviews = 380k), because long ids, timestamps, BBCode and ASCII templates eat tokens. The tool starts at 3.5, then records each model's actual ratio after a call and uses it for the next sample.
 
-## Steam: czego się dowiedzieliśmy
+## Steam: what we learned
 
-- `appreviews` przyjmuje kilka języków po przecinku, okno dat (`start_date`, `end_date`, `date_range_type=include`), `review_type=positive|negative`, `purchase_type=steam|non_steam_purchase`. Bez klucza.
-- **Limit tempa:** ok. 250 zapytań w kilka minut kończy się HTTP 429 na 1–2 minuty. Narzędzie robi odstęp 0,6 s, a po 429 czeka 30–120 s. Pierwsze uruchomienie dla dużej gry trwa więc kilka minut. Wszystko trafia do pamięci podręcznej (macOS: `~/Library/Caches/steamsum`): zamknięte miesiące na stałe, bieżący na 6 h.
-- „Z kluczy” to nie dowód astroturfingu. W Counter-Strike to 75% recenzji w 2011 roku (pudełka, pakiety) i ok. 20% dziś. Raport porównuje to z poziomem bazowym gry.
-- Strona w przeglądarce nie pobierze recenzji sama, bo Steam nie wysyła nagłówków CORS. Stąd skrypt.
+- `appreviews` accepts several comma-separated languages, a date window (`start_date`, `end_date`, `date_range_type=include`), `review_type=positive|negative` and `purchase_type=steam|non_steam_purchase`. No key needed.
+- **"Most helpful" has limits.** With a date window the list stops at 100 reviews, because page 2 repeats page 1. Without a window it only covers the last year (`day_range` max 365). There is no "most helpful of all time", which is why earlier history is sampled year by year.
+- **Rate limit:** about 250 requests within a few minutes trigger HTTP 429 for 1–2 minutes. The tool waits 0.6 s between requests and 30–120 s after a 429, so the first run for a big game takes 3–5 minutes. Everything is cached (macOS: `~/Library/Caches/steamsum`): closed months forever, the current month for 6 hours, so later runs take seconds.
+- "Key activations" are not proof of astroturfing on their own. For Counter-Strike they were 75% of reviews in 2011 (retail boxes, bundles) and about 20% today. The report compares each month with the game's own average and hides the percentage for groups under 30 reviews.
+- A web page cannot fetch the reviews by itself, because Steam sends no CORS headers. Hence a script.
 
-## Pliki
+## Files
 
-| Plik | Rola |
+| File | Role |
 |---|---|
-| `steamsum.py` | uruchamianie bez instalacji |
-| `steamsum/__main__.py` | przebieg i opcje wiersza poleceń |
-| `steamsum/steam.py` | zapytania do Steama, tempo, ponawianie |
-| `steamsum/cache.py` | pamięć podręczna na dysku (katalog zależny od systemu) |
-| `steamsum/timeline.py` | okresy i liczby recenzji |
-| `steamsum/sample.py` | czyszczenie i dobór recenzji w budżecie |
-| `steamsum/prompt.py` | prompt systemowy i dane dla modelu |
-| `steamsum/llm.py` | protokoły OpenAI-zgodny i Anthropic, szukanie kluczy, kalibracja tokenów, ceny |
-| `steamsum/chart_term.py` | wykres w terminalu |
-| `steamsum/report.py` | raport HTML (SVG rysowane w Pythonie, mały renderer Markdown) |
+| `steamsum.py` | run without installing |
+| `steamsum/__main__.py` | command-line flow and options |
+| `steamsum/steam.py` | Steam requests, pacing, retries |
+| `steamsum/cache.py` | disk cache (OS-specific directory) |
+| `steamsum/timeline.py` | periods and review counts |
+| `steamsum/sample.py` | cleaning and budgeted review selection |
+| `steamsum/prompt.py` | system prompt and model input |
+| `steamsum/llm.py` | OpenAI-compatible and Anthropic protocols, key lookup, token calibration, prices |
+| `steamsum/chart_term.py` | terminal chart |
+| `steamsum/report.py` | HTML report (SVG drawn in Python, a small Markdown renderer) |
+
+## License
+
+MIT, see [LICENSE](LICENSE).
